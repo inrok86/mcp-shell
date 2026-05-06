@@ -52,7 +52,7 @@ sudo usermod -aG mcp-users <username>
 # 파일 툴이 인증된 유저 권한으로 동작하기 위해 필요
 sudo visudo -f /etc/sudoers.d/mcp-server
 # 아래 내용 추가:
-# mcp-server-user ALL=(ALL) NOPASSWD: /usr/bin/python3, /usr/bin/bash, /usr/bin/mv, /usr/bin/mkdir, /usr/bin/tee
+# mcp-server-user ALL=(%mcp-users) NOPASSWD: /usr/bin/python3, /usr/bin/bash, /usr/bin/mv, /usr/bin/mkdir, /usr/bin/tee
 ```
 
 ## 실행
