@@ -97,7 +97,7 @@ Authentik이 구성된 환경에서 사용. 아래 환경변수 필요.
 | `ALLOWED_PATH_ROOTS` | 유저별 접근 허용 루트 경로, 콤마 구분 (기본: `/home,/oslo`) |
 | `SHARED_PATHS` | 모든 유저 공용 접근 경로, 콤마 구분 (기본: `/oslo/share`) |
 
-파일 접근 권한 예시: `ALLOWED_PATH_ROOTS=/home,/oslo` 설정 시 유저 `inrok`은 `/home/inrok`, `/oslo/inrok` 에만 접근 가능. `SHARED_PATHS`에 등록된 경로는 모든 유저 접근 가능.
+파일 접근 권한 예시: `ALLOWED_PATH_ROOTS=/home` 설정 시 유저 `inrok`은 `/home/inrok` 에만 접근 가능. `SHARED_PATHS=/storage/share` 설정 시 해당 경로는 모든 유저 접근 가능.
 
 ## Authentik 설정
 
