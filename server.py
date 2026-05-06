@@ -1,9 +1,11 @@
 import asyncio
 import json
+import mimetypes
 import os
 import pwd
 import re
 import subprocess
+import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -15,7 +17,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route
 
 from oauth import get_user
@@ -27,6 +29,8 @@ ISSUER = os.environ["AUTHENTIK_ISSUER"]
 AUTHORIZE_URL = os.environ["AUTHENTIK_AUTHORIZE_URL"]
 TOKEN_URL = os.environ["AUTHENTIK_TOKEN_URL"]
 MCP_GROUP = os.getenv("MCP_GROUP", "mcp-users")
+
+SHM_DIR = Path("/dev/shm/mcp-files")
 
 ALLOWED_PATH_ROOTS: list[Path] = [
     Path(p) for p in os.getenv("ALLOWED_PATH_ROOTS", "/home").split(",") if p.strip()
@@ -334,11 +338,12 @@ async def append_file(path: str, content: str) -> dict:
 
 
 @mcp.tool()
-async def list_dir(path: str) -> dict:
+async def list_dir(path: str, max_entries: int = 200) -> dict:
     """List the contents of a directory (one level deep).
 
     Args:
         path: Absolute path to the directory
+        max_entries: Maximum number of entries to return (default: 200)
     """
     username = current_user.get()
     try:
@@ -350,16 +355,23 @@ async def list_dir(path: str) -> dict:
 import json, sys
 from pathlib import Path
 p = Path(sys.argv[1])
+max_entries = int(sys.argv[2])
 try:
+    all_entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
+    total = len(all_entries)
+    truncated = total > max_entries
     entries = []
-    for e in sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name)):
+    for e in all_entries[:max_entries]:
         s = e.stat()
         entries.append({"name": e.name, "type": "file" if e.is_file() else "dir", "size": s.st_size if e.is_file() else None})
-    print(json.dumps({"path": str(p), "entries": entries}))
+    result = {"path": str(p), "entries": entries, "total": total, "truncated": truncated}
+    if truncated:
+        result["message"] = f"Showing {max_entries} of {total} entries. Increase max_entries to see more."
+    print(json.dumps(result))
 except Exception as ex:
     print(json.dumps({"error": str(ex)}))
 """
-    return await _sudo_python(username, script, str(target))
+    return await _sudo_python(username, script, str(target), str(max_entries))
 
 
 @mcp.tool()
@@ -471,6 +483,7 @@ async def grep(
     ignore_case: bool = False,
     include: str | None = None,
     max_results: int = 200,
+    max_chars: int = 500,
 ) -> dict:
     """Search for a regex pattern across files and return matching lines with line numbers.
 
@@ -481,6 +494,7 @@ async def grep(
         ignore_case: Case-insensitive search (default: False)
         include: Glob pattern to filter files, e.g. '*.py' (optional)
         max_results: Maximum number of matching lines to return (default: 200)
+        max_chars: Maximum characters per matched line content (default: 500)
     """
     username = current_user.get()
     try:
@@ -488,7 +502,7 @@ async def grep(
     except PermissionError as e:
         return {"error": str(e)}
 
-    payload = json.dumps({"pattern": pattern, "recursive": recursive, "ignore_case": ignore_case, "include": include, "max_results": max_results})
+    payload = json.dumps({"pattern": pattern, "recursive": recursive, "ignore_case": ignore_case, "include": include, "max_results": max_results, "max_chars": max_chars})
     script = """
 import json, re, sys
 from pathlib import Path
@@ -509,7 +523,8 @@ def search_file(f):
             if len(results) >= args["max_results"]:
                 truncated = True; return
             if compiled.search(line):
-                results.append({"file": str(f), "line": i, "content": line})
+                content = line[:args["max_chars"]]
+                results.append({"file": str(f), "line": i, "content": content})
     except Exception:
         pass
 if target.is_file():
@@ -534,48 +549,53 @@ print(json.dumps({"matches": results, "count": len(results), "truncated": trunca
 
 
 @mcp.tool()
-async def read_image(path: str) -> list:
-    """Read an image file and return it for display.
+async def file_serve(path: str, max_size_mb: float = 10.0) -> dict:
+    """Copy a file to shared memory and return a public URL the user can open in their browser.
 
-    Use this to visualize any image file — plots saved by matplotlib, VMD renderings,
-    gnuplot output, or any other image generated on the server.
-    Supports PNG, JPEG, GIF, WebP, and other common formats.
+    Use this to share any file — images, plots, CSVs, PDFs, etc. — so the user can
+    view or download it directly without consuming LLM context tokens.
+
+    The file is stored in /dev/shm (tmpfs) under a random UUID filename and served
+    unauthenticated via the public URL. Files are automatically removed on reboot.
+    Do not use this for sensitive files — anyone who obtains the URL can access it.
 
     Args:
-        path: Absolute path to the image file
+        path: Absolute path to the file to serve
+        max_size_mb: Maximum file size in MB (default: 10.0). Returns an error if exceeded.
     """
     username = current_user.get()
     try:
         target = resolve_path(path, username)
     except PermissionError as e:
-        return [{"type": "text", "text": str(e)}]
+        return {"error": str(e)}
+
+    suffix = target.suffix
+    filename = uuid.uuid4().hex + suffix
+    dest = SHM_DIR / filename
 
     script = """
-import sys, base64, json
+import json, shutil, sys
 from pathlib import Path
-p = Path(sys.argv[1])
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+max_bytes = float(sys.argv[3]) * 1024 * 1024
 try:
-    data = base64.b64encode(p.read_bytes()).decode()
-    suffix = p.suffix.lower().lstrip(".")
-    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-            "gif": "image/gif", "webp": "image/webp"}.get(suffix, "image/png")
-    print(json.dumps({"ok": True, "base64": data, "mime": mime}))
+    size = src.stat().st_size
+    if size > max_bytes:
+        print(json.dumps({"error": f"File too large: {size / 1024 / 1024:.1f} MB (limit: {sys.argv[3]} MB)"}))
+    else:
+        shutil.copy2(src, dst)
+        print(json.dumps({"ok": True, "size": size}))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
 """
-    stdout, stderr, rc = await _sudo_exec(username, ["python3", "-c", script, str(target)])
-    if rc != 0:
-        return [{"type": "text", "text": stderr.decode().strip()}]
-    try:
-        result = json.loads(stdout)
-    except Exception:
-        return [{"type": "text", "text": stdout.decode().strip()}]
-
+    result = await _sudo_python(username, script, str(target), str(dest), str(max_size_mb))
     if "error" in result:
-        return [{"type": "text", "text": result["error"]}]
+        return result
 
-    from mcp.types import ImageContent
-    return [ImageContent(type="image", data=result["base64"], mimeType=result["mime"])]
+    base = os.getenv("PUBLIC_URL", "").rstrip("/")
+    url = f"{base}/files/{filename}"
+    return {"url": url, "filename": filename}
 
 
 # ── Middleware ────────────────────────────────────────────────────────────────
@@ -612,6 +632,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+async def serve_file(request: Request):
+    filename = request.path_params["filename"]
+    if "/" in filename or filename.startswith("."):
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    file_path = SHM_DIR / filename
+    if not file_path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    media_type, _ = mimetypes.guess_type(filename)
+    return FileResponse(file_path, media_type=media_type or "application/octet-stream")
+
+
 async def protected_resource(request: Request):
     base = os.getenv("PUBLIC_URL", str(request.base_url).rstrip("/"))
     return JSONResponse({
@@ -636,6 +667,8 @@ mcp_http_app = mcp.streamable_http_app()
 
 @asynccontextmanager
 async def lifespan(app):
+    SHM_DIR.mkdir(mode=0o777, exist_ok=True)
+    SHM_DIR.chmod(0o777)  # exist_ok일 때도 권한 적용
     async with mcp_http_app.router.lifespan_context(app):
         yield
 
@@ -643,6 +676,7 @@ app = Starlette(
     routes=[
         Route("/.well-known/oauth-protected-resource", protected_resource),
         Route("/.well-known/oauth-authorization-server", auth_server_meta),
+        Route("/files/{filename}", serve_file),
         Mount("/", app=mcp_http_app),
     ],
     middleware=[Middleware(AuthMiddleware)],

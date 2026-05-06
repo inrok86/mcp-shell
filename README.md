@@ -11,12 +11,13 @@ Authentik OAuth 인증이 적용된 MCP 서버. 인증된 유저 권한으로 ba
 | `write_file` | 새 파일 쓰기 (기존 파일이면 에러) |
 | `edit_file` | 기존 파일 수정 (자동 .bak 백업) |
 | `append_file` | 파일 끝에 내용 추가 |
-| `list_dir` | 디렉토리 목록 조회 |
+| `list_dir` | 디렉토리 목록 조회 (`max_entries=200`) |
 | `file_stat` | 파일/디렉토리 메타데이터 조회 |
 | `file_delete` | 파일/빈 디렉토리 삭제 (confirmed=True 필요) |
 | `file_move` | 파일/디렉토리 이동 및 이름 변경 |
 | `mkdir` | 디렉토리 생성 |
-| `grep` | 파일에서 regex 패턴 검색 |
+| `grep` | 파일에서 regex 패턴 검색 (`max_results=200`, `max_chars=500`) |
+| `file_serve` | 파일을 `/dev/shm`에 복사하고 공개 URL 반환 (`max_size_mb=10.0`) |
 
 ## 요구사항
 
@@ -114,3 +115,4 @@ Authentik이 구성된 환경에서 사용. 아래 환경변수 필요.
 | `/.well-known/oauth-protected-resource` | MCP 클라이언트가 Authentik 주소 발견 |
 | `/.well-known/oauth-authorization-server` | Authentik AS 메타데이터 |
 | `/mcp` | MCP 엔드포인트 (Bearer 토큰 필수) |
+| `/files/{uuid}` | 파일 서빙 엔드포인트 (인증 없음, `file_serve` 툴로 등록된 파일만) |
