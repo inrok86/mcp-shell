@@ -29,10 +29,10 @@ TOKEN_URL = os.environ["AUTHENTIK_TOKEN_URL"]
 MCP_GROUP = os.getenv("MCP_GROUP", "mcp-users")
 
 ALLOWED_PATH_ROOTS: list[Path] = [
-    Path(p) for p in os.getenv("ALLOWED_PATH_ROOTS", "/home,/oslo").split(",") if p.strip()
+    Path(p) for p in os.getenv("ALLOWED_PATH_ROOTS", "/home").split(",") if p.strip()
 ]
 SHARED_PATHS: list[Path] = [
-    Path(p) for p in os.getenv("SHARED_PATHS", "/oslo/share").split(",") if p.strip()
+    Path(p) for p in os.getenv("SHARED_PATHS", "").split(",") if p.strip()
 ]
 
 # Bearer 토큰 → 유저명 매핑 (.env의 TOKEN_<username>=<token> 항목)
