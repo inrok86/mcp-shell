@@ -533,6 +533,51 @@ print(json.dumps({"matches": results, "count": len(results), "truncated": trunca
         return {"error": stdout.decode().strip()}
 
 
+@mcp.tool()
+async def read_image(path: str) -> list:
+    """Read an image file and return it for display.
+
+    Use this to visualize any image file — plots saved by matplotlib, VMD renderings,
+    gnuplot output, or any other image generated on the server.
+    Supports PNG, JPEG, GIF, WebP, and other common formats.
+
+    Args:
+        path: Absolute path to the image file
+    """
+    username = current_user.get()
+    try:
+        target = resolve_path(path, username)
+    except PermissionError as e:
+        return [{"type": "text", "text": str(e)}]
+
+    script = """
+import sys, base64, json
+from pathlib import Path
+p = Path(sys.argv[1])
+try:
+    data = base64.b64encode(p.read_bytes()).decode()
+    suffix = p.suffix.lower().lstrip(".")
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "gif": "image/gif", "webp": "image/webp"}.get(suffix, "image/png")
+    print(json.dumps({"ok": True, "base64": data, "mime": mime}))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+"""
+    stdout, stderr, rc = await _sudo_exec(username, ["python3", "-c", script, str(target)])
+    if rc != 0:
+        return [{"type": "text", "text": stderr.decode().strip()}]
+    try:
+        result = json.loads(stdout)
+    except Exception:
+        return [{"type": "text", "text": stdout.decode().strip()}]
+
+    if "error" in result:
+        return [{"type": "text", "text": result["error"]}]
+
+    from mcp.types import ImageContent
+    return [ImageContent(type="image", data=result["base64"], mimeType=result["mime"])]
+
+
 # ── Middleware ────────────────────────────────────────────────────────────────
 
 class AuthMiddleware(BaseHTTPMiddleware):
