@@ -61,11 +61,31 @@ sudo visudo -f /etc/sudoers.d/mcp-server
 venv/bin/python server.py
 ```
 
+## 인증 방식
+
+두 가지 인증 방식을 동시에 지원합니다. Bearer 토큰을 먼저 확인하고, 없으면 OAuth로 fallback합니다.
+
+### 1. Bearer 토큰 (간단)
+
+`.env`에 `TOKEN_<username>=<token>` 형식으로 추가:
+
+```
+TOKEN_inrok=mysecrettoken
+TOKEN_alice=anothetoken
+```
+
+Claude Desktop 등 MCP 클라이언트에서 해당 토큰으로 접속하면 해당 유저로 실행됩니다.
+
+### 2. Authentik OAuth
+
+Authentik이 구성된 환경에서 사용. 아래 환경변수 필요.
+
 ## 환경변수 (.env)
 
 | 키 | 설명 |
 |---|---|
 | `PORT` | 서버 포트 (기본: 3000) |
+| `TOKEN_<username>` | Bearer 토큰 인증용. 예: `TOKEN_inrok=mysecret` |
 | `AUTHENTIK_ISSUER` | Authentik OIDC issuer URL |
 | `AUTHENTIK_AUTHORIZE_URL` | 인증 엔드포인트 |
 | `AUTHENTIK_TOKEN_URL` | 토큰 엔드포인트 |

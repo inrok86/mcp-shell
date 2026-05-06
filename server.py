@@ -35,6 +35,13 @@ SHARED_PATHS: list[Path] = [
     Path(p) for p in os.getenv("SHARED_PATHS", "/oslo/share").split(",") if p.strip()
 ]
 
+# Bearer 토큰 → 유저명 매핑 (.env의 TOKEN_<username>=<token> 항목)
+TOKEN_MAP: dict[str, str] = {
+    value: key.removeprefix("TOKEN_").lower()
+    for key, value in os.environ.items()
+    if key.startswith("TOKEN_")
+}
+
 current_user: ContextVar[str] = ContextVar("current_user")
 
 # ── Path resolution ───────────────────────────────────────────────────────────
@@ -542,7 +549,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": f'Bearer realm="mcp-server", resource_metadata_uri="{base}/.well-known/oauth-protected-resource"'},
             )
 
-        user = await get_user(auth.removeprefix("Bearer "))
+        token = auth.removeprefix("Bearer ")
+
+        # 1. Bearer 토큰 맵에서 먼저 확인
+        if token in TOKEN_MAP:
+            current_user.set(TOKEN_MAP[token])
+            return await call_next(request)
+
+        # 2. OAuth introspect 시도
+        user = await get_user(token)
         if not user:
             return JSONResponse({"error": "invalid_token"}, status_code=401)
 
