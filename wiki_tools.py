@@ -44,6 +44,15 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
     upload_url = f"{wiki_url}/u"
     locale = os.getenv("WIKI_LOCALE", "en")
 
+    # 스키마/컨벤션 힌트 로드 (선택)
+    _schema_hint = ""
+    _schema_file = os.getenv("WIKI_SCHEMA_FILE", "")
+    if _schema_file:
+        try:
+            _schema_hint = "\n\n---\n" + Path(_schema_file).expanduser().read_text().strip()
+        except OSError as e:
+            print(f"[wiki_tools] WIKI_SCHEMA_FILE 읽기 실패: {e}")
+
     home_prefix = os.getenv("WIKI_HOME_PREFIX", "").strip().strip("/")
     common_paths: list[str] = [
         p.strip().strip("/")
@@ -186,7 +195,6 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
 
     # ── MCP 도구 등록 ─────────────────────────────────────────────────────────
 
-    @mcp.tool()
     async def wiki_get_page(path: str) -> dict:
         """Wiki.js 페이지를 경로로 조회한다. 제목, 마크다운 내용, 태그, 메타데이터를 반환.
 
@@ -195,7 +203,9 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
         """
         return await _fetch_page(path)
 
-    @mcp.tool()
+    wiki_get_page.__doc__ += _schema_hint
+    mcp.tool()(wiki_get_page)
+
     async def wiki_modify_page(
         path: str,
         mode: str,
@@ -287,6 +297,9 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
 
         else:
             return {"error": f"알 수 없는 mode: {mode!r}. 'create' | 'update' | 'full_update' 중 선택."}
+
+    wiki_modify_page.__doc__ += _schema_hint
+    mcp.tool()(wiki_modify_page)
 
     @mcp.tool()
     async def wiki_get_tags() -> dict:
