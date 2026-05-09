@@ -209,7 +209,7 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
         username = current_user.get()
         result = await _fetch_page(path)
         if "error" in result or save_to is None:
-            return result
+            return {**result, "you": username}
 
         try:
             target = resolve_path(save_to, username)
@@ -231,7 +231,7 @@ print("ok")
         )
         if rc != 0:
             return {**result, "save_error": stderr.decode().strip()}
-        return {**result, "saved_to": str(target)}
+        return {**result, "saved_to": str(target), "you": username}
 
     mcp.tool()(wiki_get_page)
 
@@ -309,7 +309,7 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
             result = await _create(norm_path, title, content, tags or [])
             if "error" in result:
                 return result
-            return {"ok": True, "mode": "create", "page": result["page"]}
+            return {"ok": True, "mode": "create", "page": result["page"], "you": username}
 
         elif mode == "update":
             if old_text is None or new_text is None:
@@ -328,7 +328,7 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
             )
             if "error" in result:
                 return result
-            return {"ok": True, "mode": "update", "page": result["page"]}
+            return {"ok": True, "mode": "update", "page": result["page"], "you": username}
 
         elif mode == "full_update":
             if content is None:
@@ -342,14 +342,14 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
                 )
                 if "error" in result:
                     return result
-                return {"ok": True, "mode": "full_update", "action": "updated", "page": result["page"]}
+                return {"ok": True, "mode": "full_update", "action": "updated", "page": result["page"], "you": username}
             else:
                 if not title:
                     return {"error": "title is required when creating a new page."}
                 result = await _create(norm_path, title, content, tags or [])
                 if "error" in result:
                     return result
-                return {"ok": True, "mode": "full_update", "action": "created", "page": result["page"]}
+                return {"ok": True, "mode": "full_update", "action": "created", "page": result["page"], "you": username}
 
         else:
             return {"error": f"Unknown mode: {mode!r}. Choose from 'create' | 'update' | 'full_update'."}
@@ -382,10 +382,8 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
             for tag in (page.get("tags") or []):
                 tag_set[tag] = tag_set.get(tag, 0) + 1
         tags_sorted = sorted(tag_set.items(), key=lambda x: (-x[1], x[0]))
-        return {
-            "tags": [{"tag": t, "usage_count": c} for t, c in tags_sorted],
-            "count": len(tag_set),
-        }
+        tags_sorted_list = [{"tag": t, "usage_count": c} for t, c in tags_sorted]
+        return {"tags": tags_sorted_list, "count": len(tag_set), "you": current_user.get()}
 
     @mcp.tool()
     async def wiki_upload_asset(
@@ -453,6 +451,6 @@ except Exception as e:
         except Exception:
             data = {"raw": resp.text[:500]}
 
-        return {"ok": True, "filename": upload_filename, "mime": mime_type, "response": data}
+        return {"ok": True, "filename": upload_filename, "mime": mime_type, "response": data, "you": username}
 
     return True
