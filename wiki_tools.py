@@ -45,14 +45,7 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
     upload_url = f"{wiki_url}/u"
     locale = os.getenv("WIKI_LOCALE", "en")
 
-    # Load schema/convention hint (optional)
-    _schema_hint = ""
-    _schema_file = os.getenv("WIKI_SCHEMA_FILE", "")
-    if _schema_file:
-        try:
-            _schema_hint = "\n\n---\n" + Path(_schema_file).expanduser().read_text().strip()
-        except OSError as e:
-            print(f"[wiki_tools] Failed to read WIKI_SCHEMA_FILE: {e}")
+    _schema_hint = os.getenv("WIKI_SCHEMA_HINT", "")
 
     home_prefix = os.getenv("WIKI_HOME_PREFIX", "").strip().strip("/")
     common_paths: list[str] = [
