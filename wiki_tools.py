@@ -1,18 +1,19 @@
 """Wiki.js MCP tools — pluggable module for the toscana MCP server.
 
-환경 변수 (.env):
-  WIKI_URL            Wiki.js 서버 주소 (e.g. https://wiki.cbpc.ewha.ac.kr)
-  WIKI_API_KEY_FILE   관리자 API 키가 담긴 파일 경로 (e.g. ~/wiki_cbpc.key)
-  WIKI_LOCALE         페이지 로케일 (default: en)
-  WIKI_HOME_PREFIX    유저 홈 경로 접두사 (default: 없음 → wiki.xyz/{username})
-  WIKI_COMMON_PATHS   공용 디렉토리 경로들, 콤마 구분 (e.g. cbpc,public)
+Environment variables (.env):
+  WIKI_URL            Wiki.js server base URL (e.g. https://wiki.cbpc.ewha.ac.kr)
+  WIKI_API_KEY_FILE   Path to file containing the admin API key (e.g. ~/wiki_cbpc.key)
+  WIKI_LOCALE         Page locale (default: en)
+  WIKI_HOME_PREFIX    Prefix for user home paths (default: none → wiki.xyz/{username})
+  WIKI_COMMON_PATHS   Comma-separated shared paths writable by all authenticated users
+  WIKI_SCHEMA_FILE    Path to a markdown file with wiki conventions (injected into tool docstrings)
 
-권한 모델:
-  - 읽기 (get_page, get_tags): 모든 인증 유저 가능
-  - 쓰기 (modify_page, upload_asset):
-      · 본인 홈: {WIKI_HOME_PREFIX}/{username}/... 또는 {username}/...
-      · 공용:   WIKI_COMMON_PATHS 에 나열된 경로들
-      · 그 외:  거부
+Permission model:
+  - Read  (get_page, get_tags): all authenticated users
+  - Write (modify_page, upload_asset):
+      · User home: {WIKI_HOME_PREFIX}/{username}/... or {username}/...
+      · Common:    paths listed in WIKI_COMMON_PATHS
+      · Otherwise: denied
 """
 
 import mimetypes
@@ -24,9 +25,9 @@ import httpx
 
 
 def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_exec) -> bool:
-    """Wiki.js 도구를 MCP 인스턴스에 등록한다.
+    """Register Wiki.js tools with the MCP instance.
 
-    WIKI_URL / WIKI_API_KEY_FILE 이 설정되지 않으면 등록 없이 False 반환.
+    Returns False without registering if WIKI_URL or WIKI_API_KEY_FILE is not set.
     """
     wiki_url = os.getenv("WIKI_URL", "").rstrip("/")
     key_file = os.getenv("WIKI_API_KEY_FILE", "")
@@ -37,21 +38,21 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
     try:
         api_key = Path(key_file).expanduser().read_text().strip()
     except OSError as e:
-        print(f"[wiki_tools] API 키 파일 읽기 실패: {e}")
+        print(f"[wiki_tools] Failed to read API key file: {e}")
         return False
 
     graphql_url = f"{wiki_url}/graphql"
     upload_url = f"{wiki_url}/u"
     locale = os.getenv("WIKI_LOCALE", "en")
 
-    # 스키마/컨벤션 힌트 로드 (선택)
+    # Load schema/convention hint (optional)
     _schema_hint = ""
     _schema_file = os.getenv("WIKI_SCHEMA_FILE", "")
     if _schema_file:
         try:
             _schema_hint = "\n\n---\n" + Path(_schema_file).expanduser().read_text().strip()
         except OSError as e:
-            print(f"[wiki_tools] WIKI_SCHEMA_FILE 읽기 실패: {e}")
+            print(f"[wiki_tools] Failed to read WIKI_SCHEMA_FILE: {e}")
 
     home_prefix = os.getenv("WIKI_HOME_PREFIX", "").strip().strip("/")
     common_paths: list[str] = [
@@ -60,7 +61,7 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
         if p.strip()
     ]
 
-    # ── 내부 헬퍼 ────────────────────────────────────────────────────────────
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _headers() -> dict:
         return {
@@ -94,14 +95,14 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
 
     def _write_denied_msg(username: str) -> str:
         home = _user_home(username)
-        common_str = ", ".join(f"'{c}'" for c in common_paths) if common_paths else "(없음)"
+        common_str = ", ".join(f"'{c}'" for c in common_paths) if common_paths else "(none)"
         return (
-            f"쓰기 권한 없음. 허용 경로: 본인 홈 '{home}/...' "
-            f"또는 공용 경로 {common_str}"
+            f"Write access denied. Allowed: user home '{home}/...' "
+            f"or common paths {common_str}"
         )
 
     async def _fetch_page(path: str) -> dict:
-        """내부용 페이지 조회 (tool 등록 없음)."""
+        """Internal page fetch (not registered as a tool)."""
         query = """
         query($path: String!, $locale: String!) {
           pages {
@@ -118,7 +119,7 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
             return {"error": result["errors"][0]["message"]}
         page = result.get("data", {}).get("pages", {}).get("singleByPath")
         if not page:
-            return {"error": f"페이지를 찾을 수 없음: {path}"}
+            return {"error": f"Page not found: {path}"}
         return {
             "id": page["id"],
             "path": page["path"],
@@ -193,17 +194,17 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
             return {"error": r["responseResult"]["message"]}
         return {"ok": True, "page": r["page"]}
 
-    # ── MCP 도구 등록 ─────────────────────────────────────────────────────────
+    # ── MCP tool registration ─────────────────────────────────────────────────
 
     async def wiki_get_page(path: str, save_to: str | None = None) -> dict:
-        """Wiki.js 페이지를 경로로 조회한다. 제목, 마크다운 내용, 태그, 메타데이터를 반환.
+        """Retrieve a Wiki.js page by its path. Returns title, markdown content, tags, and metadata.
 
-        대규모 편집이 필요한 경우 save_to로 로컬 파일에 저장하고,
-        편집 후 wiki_modify_page(content_file=...)로 업로드하는 워크플로를 권장한다.
+        For large edits, use save_to to write the content to a local file,
+        edit it, then upload with wiki_modify_page(content_file=...).
 
         Args:
-            path:    페이지 경로 (e.g. 'cbpc/protocols', 'inrok/notes')
-            save_to: 마크다운 내용을 저장할 로컬 파일 경로 (선택, e.g. '/home/inrok/edit.md')
+            path:    Page path (e.g. 'cbpc/protocols', 'inrok/notes')
+            save_to: Local file path to save the markdown content (optional, e.g. '/home/inrok/edit.md')
         """
         username = current_user.get()
         result = await _fetch_page(path)
@@ -245,36 +246,39 @@ print("ok")
         new_text: str | None = None,
         tags: list[str] | None = None,
     ) -> dict:
-        """Wiki.js 페이지를 생성하거나 수정한다.
+        """Create or modify a Wiki.js page.
 
-        mode 종류:
-          'create'      — 새 페이지 생성. title과 content(또는 content_file) 필수.
-          'update'      — sed 방식 부분 수정. old_text → new_text 치환 (첫 번째만).
-          'full_update' — 전체 내용 대치. content 또는 content_file 필수.
-                          페이지가 없으면 생성(title도 필수), 있으면 덮어씀.
+        Modes:
+          'create'      — Create a new page. Requires title and content (or content_file).
+                          Fails if the page already exists.
+          'update'      — Sed-style partial edit. Replaces the first occurrence of old_text
+                          with new_text. Requires old_text and new_text.
+          'full_update' — Replace the entire content. Requires content or content_file.
+                          Creates the page if it does not exist (title also required);
+                          overwrites if it does.
 
-        대규모 편집 워크플로:
-          1. wiki_get_page(path, save_to='/path/to/edit.md') 로 파일 저장
-          2. 파일 편집 (edit_file 등으로)
+        Large-edit workflow:
+          1. wiki_get_page(path, save_to='/path/to/edit.md')
+          2. Edit the file (e.g. with edit_file)
           3. wiki_modify_page(path, mode='full_update', content_file='/path/to/edit.md')
 
-        쓰기 권한:
-          본인 홈 ({home_prefix}/{username}/...) 또는 WIKI_COMMON_PATHS 경로만 허용.
+        Write access is limited to:
+          User home ({home_prefix}/{username}/...) or paths in WIKI_COMMON_PATHS.
 
         Args:
-            path:         페이지 경로 (e.g. 'inrok/my-note', 'cbpc/meeting-log')
+            path:         Page path (e.g. 'inrok/my-note', 'cbpc/meeting-log')
             mode:         'create' | 'update' | 'full_update'
-            title:        페이지 제목 (create 필수, full_update는 신규 생성 시 필수)
-            content:      마크다운 전체 내용 (content_file과 택일)
-            content_file: 마크다운 파일 경로 (content와 택일, e.g. '/home/inrok/edit.md')
-            old_text:     찾을 텍스트 (update 필수)
-            new_text:     교체할 텍스트 (update 필수)
-            tags:         태그 목록 (optional; 미지정 시 기존 태그 유지)
+            title:        Page title (required for create; required for full_update on new pages)
+            content:      Full markdown content (mutually exclusive with content_file)
+            content_file: Path to a local markdown file to read content from
+            old_text:     Text to find and replace (required for update)
+            new_text:     Replacement text (required for update)
+            tags:         List of tags (optional; existing tags kept if omitted)
         """
         username = current_user.get()
         norm_path = path.strip("/")
 
-        # content_file 우선 처리
+        # content_file takes priority over inline content
         if content_file is not None:
             try:
                 cf_path = resolve_path(content_file, username)
@@ -289,7 +293,7 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
                 username, ["python3", "-c", script, str(cf_path)]
             )
             if rc != 0:
-                return {"error": f"content_file 읽기 실패: {stderr.decode().strip()}"}
+                return {"error": f"Failed to read content_file: {stderr.decode().strip()}"}
             content = stdout.decode("utf-8")
 
         if not _can_write(norm_path, username):
@@ -300,9 +304,9 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
 
         if mode == "create":
             if not title or content is None:
-                return {"error": "mode='create' 는 title과 content가 필요합니다."}
+                return {"error": "mode='create' requires title and content."}
             if page_exists:
-                return {"error": f"이미 존재하는 페이지: '{norm_path}'. 덮어쓰려면 mode='full_update' 사용."}
+                return {"error": f"Page already exists: '{norm_path}'. Use mode='full_update' to overwrite."}
             result = await _create(norm_path, title, content, tags or [])
             if "error" in result:
                 return result
@@ -310,12 +314,12 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
 
         elif mode == "update":
             if old_text is None or new_text is None:
-                return {"error": "mode='update' 는 old_text와 new_text가 필요합니다."}
+                return {"error": "mode='update' requires old_text and new_text."}
             if not page_exists:
-                return {"error": f"페이지를 찾을 수 없음: '{norm_path}'. 생성하려면 mode='create' 사용."}
+                return {"error": f"Page not found: '{norm_path}'. Use mode='create' to create it."}
             current_content: str = existing["content"]
             if old_text not in current_content:
-                return {"error": f"old_text를 페이지에서 찾을 수 없습니다: {repr(old_text[:100])}"}
+                return {"error": f"old_text not found in page content: {repr(old_text[:100])}"}
             new_content = current_content.replace(old_text, new_text, 1)
             result = await _update(
                 existing["id"], norm_path,
@@ -329,7 +333,7 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
 
         elif mode == "full_update":
             if content is None:
-                return {"error": "mode='full_update' 는 content가 필요합니다."}
+                return {"error": "mode='full_update' requires content or content_file."}
             if page_exists:
                 result = await _update(
                     existing["id"], norm_path,
@@ -342,24 +346,23 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
                 return {"ok": True, "mode": "full_update", "action": "updated", "page": result["page"]}
             else:
                 if not title:
-                    return {"error": "신규 페이지 생성 시 title이 필요합니다."}
+                    return {"error": "title is required when creating a new page."}
                 result = await _create(norm_path, title, content, tags or [])
                 if "error" in result:
                     return result
                 return {"ok": True, "mode": "full_update", "action": "created", "page": result["page"]}
 
         else:
-            return {"error": f"알 수 없는 mode: {mode!r}. 'create' | 'update' | 'full_update' 중 선택."}
+            return {"error": f"Unknown mode: {mode!r}. Choose from 'create' | 'update' | 'full_update'."}
 
     wiki_modify_page.__doc__ += _schema_hint
     mcp.tool()(wiki_modify_page)
 
     @mcp.tool()
     async def wiki_get_tags() -> dict:
-        """Wiki.js 전체 페이지에서 사용 중인 태그 목록을 반환한다.
+        """List all tags used across Wiki.js pages, with usage counts.
 
-        태그 중복 방지를 위해 페이지 저장 전 이 도구로 기존 태그를 확인하고
-        가장 유사한 태그를 재사용하는 것을 권장한다.
+        Call this before saving a page to reuse existing tags and avoid duplicates.
         """
         query = """
         query {
@@ -374,7 +377,7 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
         if "errors" in result:
             return {"error": result["errors"][0]["message"]}
         pages = result.get("data", {}).get("pages", {}).get("list", [])
-        # 모든 페이지의 태그를 모아 중복 제거, 정렬
+        # Collect and deduplicate tags across all pages
         tag_set: dict[str, int] = {}
         for page in pages:
             for tag in (page.get("tags") or []):
@@ -391,29 +394,30 @@ sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
         target_path: str,
         filename: str | None = None,
     ) -> dict:
-        """서버의 파일을 Wiki.js 에셋으로 업로드한다.
+        """Upload a server-side file to Wiki.js as an asset.
 
-        시뮬레이션 결과 이미지, 생성된 그래프 등 서버에 있는 파일을 직접 위키에 올릴 때 사용.
-        파일 접근 권한(resolve_path)과 위키 쓰기 권한(_can_write)을 모두 확인한다.
+        Intended for uploading simulation results, generated plots, and similar files
+        directly from the server to the wiki. Checks both filesystem access (resolve_path)
+        and wiki write permission (_can_write).
 
         Args:
-            file_path:   업로드할 파일의 서버 절대 경로 (e.g. '/home/inrok/results/plot.png')
-            target_path: 위키 쓰기 권한 확인용 경로 (e.g. 'inrok/images', 'cbpc/assets')
-            filename:    위키에 저장될 파일명 (미지정 시 원본 파일명 사용)
+            file_path:   Absolute server path of the file to upload (e.g. '/home/inrok/results/plot.png')
+            target_path: Wiki path used for write permission check (e.g. 'inrok/images', 'cbpc/assets')
+            filename:    Filename to use in the wiki (defaults to the original filename)
         """
         username = current_user.get()
 
-        # 파일시스템 접근 권한 확인
+        # Check filesystem access
         try:
             resolved = resolve_path(file_path, username)
         except PermissionError as e:
             return {"error": str(e)}
 
-        # 위키 쓰기 권한 확인
+        # Check wiki write permission
         if not _can_write(target_path.strip("/"), username):
             return {"error": _write_denied_msg(username)}
 
-        # 파일 읽기 (유저 권한으로, python3 사용)
+        # Read file as the authenticated user
         script = """
 import sys
 from pathlib import Path
@@ -426,7 +430,7 @@ except Exception as e:
 """
         stdout, stderr, rc = await sudo_exec(username, ["python3", "-c", script, str(resolved)])
         if rc != 0:
-            return {"error": f"파일 읽기 실패: {stderr.decode().strip()}"}
+            return {"error": f"Failed to read file: {stderr.decode().strip()}"}
 
         file_bytes = stdout
         upload_filename = filename or resolved.name
@@ -443,7 +447,7 @@ except Exception as e:
             )
 
         if resp.status_code not in (200, 201):
-            return {"error": f"업로드 실패: HTTP {resp.status_code} — {resp.text[:300]}"}
+            return {"error": f"Upload failed: HTTP {resp.status_code} — {resp.text[:300]}"}
 
         try:
             data = resp.json()

@@ -617,12 +617,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         token = auth.removeprefix("Bearer ")
 
-        # 1. Bearer 토큰 맵에서 먼저 확인
+        # 1. Check static Bearer token map first
         if token in TOKEN_MAP:
             current_user.set(TOKEN_MAP[token])
             return await call_next(request)
 
-        # 2. OAuth introspect 시도
+        # 2. Fall back to OAuth introspect
         user = await get_user(token)
         if not user:
             return JSONResponse({"error": "invalid_token"}, status_code=401)
@@ -669,7 +669,7 @@ mcp_http_app = mcp.streamable_http_app()
 @asynccontextmanager
 async def lifespan(app):
     SHM_DIR.mkdir(mode=0o777, exist_ok=True)
-    SHM_DIR.chmod(0o777)  # exist_ok일 때도 권한 적용
+    SHM_DIR.chmod(0o777)  # apply permissions even when exist_ok=True
     async with mcp_http_app.router.lifespan_context(app):
         yield
 
@@ -684,13 +684,13 @@ app = Starlette(
     lifespan=lifespan,
 )
 
-# ── Wiki.js 도구 등록 ────────────────────────────────────────────────────────
+# ── Wiki.js tools ────────────────────────────────────────────────────────────
 
 _wiki_registered = register_wiki_tools(mcp, current_user, resolve_path, _sudo_exec)
 if _wiki_registered:
-    print("[wiki_tools] Wiki.js 도구 등록 완료")
+    print("[wiki_tools] Wiki.js tools registered")
 else:
-    print("[wiki_tools] WIKI_URL / WIKI_API_KEY_FILE 미설정 — 스킵")
+    print("[wiki_tools] WIKI_URL / WIKI_API_KEY_FILE not set — skipping")
 
 
 if __name__ == "__main__":
