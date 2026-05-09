@@ -8,3 +8,4 @@ __pycache__/
 *.un~
 .claude/
 *.service
+*.key
