@@ -15,7 +15,6 @@
       · 그 외:  거부
 """
 
-import base64
 import mimetypes
 import os
 from pathlib import Path
@@ -24,7 +23,7 @@ from contextvars import ContextVar
 import httpx
 
 
-def register_wiki_tools(mcp, current_user: ContextVar[str]) -> bool:
+def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_exec) -> bool:
     """Wiki.js 도구를 MCP 인스턴스에 등록한다.
 
     WIKI_URL / WIKI_API_KEY_FILE 이 설정되지 않으면 등록 없이 False 반환.
@@ -322,36 +321,57 @@ def register_wiki_tools(mcp, current_user: ContextVar[str]) -> bool:
 
     @mcp.tool()
     async def wiki_upload_asset(
+        file_path: str,
         target_path: str,
-        filename: str,
-        file_content_base64: str,
+        filename: str | None = None,
     ) -> dict:
-        """파일(이미지, 문서 등)을 Wiki.js 에셋으로 업로드한다.
+        """서버의 파일을 Wiki.js 에셋으로 업로드한다.
 
-        쓰기 권한 확인: target_path 기준으로 본인 홈 또는 공용 경로만 허용.
+        시뮬레이션 결과 이미지, 생성된 그래프 등 서버에 있는 파일을 직접 위키에 올릴 때 사용.
+        파일 접근 권한(resolve_path)과 위키 쓰기 권한(_can_write)을 모두 확인한다.
 
         Args:
-            target_path:         권한 확인용 경로 (e.g. 'inrok/images', 'cbpc/assets')
-            filename:            업로드할 파일명 (e.g. 'diagram.png')
-            file_content_base64: Base64 인코딩된 파일 내용
+            file_path:   업로드할 파일의 서버 절대 경로 (e.g. '/home/inrok/results/plot.png')
+            target_path: 위키 쓰기 권한 확인용 경로 (e.g. 'inrok/images', 'cbpc/assets')
+            filename:    위키에 저장될 파일명 (미지정 시 원본 파일명 사용)
         """
         username = current_user.get()
+
+        # 파일시스템 접근 권한 확인
+        try:
+            resolved = resolve_path(file_path, username)
+        except PermissionError as e:
+            return {"error": str(e)}
+
+        # 위키 쓰기 권한 확인
         if not _can_write(target_path.strip("/"), username):
             return {"error": _write_denied_msg(username)}
 
-        try:
-            file_bytes = base64.b64decode(file_content_base64)
-        except Exception as e:
-            return {"error": f"Base64 디코딩 실패: {e}"}
+        # 파일 읽기 (유저 권한으로, python3 사용)
+        script = """
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+try:
+    sys.stdout.buffer.write(p.read_bytes())
+except Exception as e:
+    sys.stderr.write(str(e))
+    sys.exit(1)
+"""
+        stdout, stderr, rc = await sudo_exec(username, ["python3", "-c", script, str(resolved)])
+        if rc != 0:
+            return {"error": f"파일 읽기 실패: {stderr.decode().strip()}"}
 
-        mime_type, _ = mimetypes.guess_type(filename)
+        file_bytes = stdout
+        upload_filename = filename or resolved.name
+        mime_type, _ = mimetypes.guess_type(upload_filename)
         mime_type = mime_type or "application/octet-stream"
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 upload_url,
                 headers={"Authorization": f"Bearer {api_key}"},
-                files={"mediaUpload": (filename, file_bytes, mime_type)},
+                files={"mediaUpload": (upload_filename, file_bytes, mime_type)},
                 data={"mediaUpload": '{"folderId":null}'},
                 timeout=60,
             )
@@ -364,6 +384,6 @@ def register_wiki_tools(mcp, current_user: ContextVar[str]) -> bool:
         except Exception:
             data = {"raw": resp.text[:500]}
 
-        return {"ok": True, "filename": filename, "mime": mime_type, "response": data}
+        return {"ok": True, "filename": upload_filename, "mime": mime_type, "response": data}
 
     return True

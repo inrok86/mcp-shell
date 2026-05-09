@@ -686,7 +686,7 @@ app = Starlette(
 
 # ── Wiki.js 도구 등록 ────────────────────────────────────────────────────────
 
-_wiki_registered = register_wiki_tools(mcp, current_user)
+_wiki_registered = register_wiki_tools(mcp, current_user, resolve_path, _sudo_exec)
 if _wiki_registered:
     print("[wiki_tools] Wiki.js 도구 등록 완료")
 else:
