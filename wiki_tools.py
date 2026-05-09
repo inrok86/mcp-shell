@@ -233,7 +233,6 @@ print("ok")
             return {**result, "save_error": stderr.decode().strip()}
         return {**result, "saved_to": str(target)}
 
-    wiki_get_page.__doc__ += _schema_hint
     mcp.tool()(wiki_get_page)
 
     async def wiki_modify_page(
