@@ -6,7 +6,7 @@ Environment variables (.env):
   WIKI_LOCALE         Page locale (default: en)
   WIKI_HOME_PREFIX    Prefix for user home paths (default: none → wiki.xyz/{username})
   WIKI_COMMON_PATHS   Comma-separated shared paths writable by all authenticated users
-  WIKI_SCHEMA_FILE    Path to a markdown file with wiki conventions (injected into tool docstrings)
+  WIKI_SCHEMA_HINT    Hint string appended to wiki_modify_page docstring (e.g. point to the schema page)
 
 Permission model:
   - Read  (get_page, get_tags): all authenticated users
