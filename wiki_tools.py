@@ -195,13 +195,42 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
 
     # ── MCP 도구 등록 ─────────────────────────────────────────────────────────
 
-    async def wiki_get_page(path: str) -> dict:
+    async def wiki_get_page(path: str, save_to: str | None = None) -> dict:
         """Wiki.js 페이지를 경로로 조회한다. 제목, 마크다운 내용, 태그, 메타데이터를 반환.
 
+        대규모 편집이 필요한 경우 save_to로 로컬 파일에 저장하고,
+        편집 후 wiki_modify_page(content_file=...)로 업로드하는 워크플로를 권장한다.
+
         Args:
-            path: 페이지 경로 (e.g. 'cbpc/protocols', 'inrok/notes')
+            path:    페이지 경로 (e.g. 'cbpc/protocols', 'inrok/notes')
+            save_to: 마크다운 내용을 저장할 로컬 파일 경로 (선택, e.g. '/home/inrok/edit.md')
         """
-        return await _fetch_page(path)
+        username = current_user.get()
+        result = await _fetch_page(path)
+        if "error" in result or save_to is None:
+            return result
+
+        try:
+            target = resolve_path(save_to, username)
+        except PermissionError as e:
+            return {**result, "save_error": str(e)}
+
+        script = """
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(sys.stdin.read(), encoding="utf-8")
+print("ok")
+"""
+        content_to_save = f"# {result['title']}\n\n{result['content']}"
+        stdout, stderr, rc = await sudo_exec(
+            username, ["python3", "-c", script, str(target)],
+            stdin_data=content_to_save.encode()
+        )
+        if rc != 0:
+            return {**result, "save_error": stderr.decode().strip()}
+        return {**result, "saved_to": str(target)}
 
     wiki_get_page.__doc__ += _schema_hint
     mcp.tool()(wiki_get_page)
@@ -211,6 +240,7 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
         mode: str,
         title: str | None = None,
         content: str | None = None,
+        content_file: str | None = None,
         old_text: str | None = None,
         new_text: str | None = None,
         tags: list[str] | None = None,
@@ -218,26 +248,49 @@ def register_wiki_tools(mcp, current_user: ContextVar[str], resolve_path, sudo_e
         """Wiki.js 페이지를 생성하거나 수정한다.
 
         mode 종류:
-          'create'      — 새 페이지 생성. title과 content 필수. 이미 존재하면 오류.
+          'create'      — 새 페이지 생성. title과 content(또는 content_file) 필수.
           'update'      — sed 방식 부분 수정. old_text → new_text 치환 (첫 번째만).
-                          old_text와 new_text 필수.
-          'full_update' — 전체 내용 대치. content 필수.
+          'full_update' — 전체 내용 대치. content 또는 content_file 필수.
                           페이지가 없으면 생성(title도 필수), 있으면 덮어씀.
+
+        대규모 편집 워크플로:
+          1. wiki_get_page(path, save_to='/path/to/edit.md') 로 파일 저장
+          2. 파일 편집 (edit_file 등으로)
+          3. wiki_modify_page(path, mode='full_update', content_file='/path/to/edit.md')
 
         쓰기 권한:
           본인 홈 ({home_prefix}/{username}/...) 또는 WIKI_COMMON_PATHS 경로만 허용.
 
         Args:
-            path:     페이지 경로 (e.g. 'inrok/my-note', 'cbpc/meeting-log')
-            mode:     'create' | 'update' | 'full_update'
-            title:    페이지 제목 (create 필수, full_update는 신규 생성 시 필수)
-            content:  마크다운 전체 내용 (create, full_update 필수)
-            old_text: 찾을 텍스트 (update 필수)
-            new_text: 교체할 텍스트 (update 필수)
-            tags:     태그 목록 (optional; 미지정 시 기존 태그 유지)
+            path:         페이지 경로 (e.g. 'inrok/my-note', 'cbpc/meeting-log')
+            mode:         'create' | 'update' | 'full_update'
+            title:        페이지 제목 (create 필수, full_update는 신규 생성 시 필수)
+            content:      마크다운 전체 내용 (content_file과 택일)
+            content_file: 마크다운 파일 경로 (content와 택일, e.g. '/home/inrok/edit.md')
+            old_text:     찾을 텍스트 (update 필수)
+            new_text:     교체할 텍스트 (update 필수)
+            tags:         태그 목록 (optional; 미지정 시 기존 태그 유지)
         """
         username = current_user.get()
         norm_path = path.strip("/")
+
+        # content_file 우선 처리
+        if content_file is not None:
+            try:
+                cf_path = resolve_path(content_file, username)
+            except PermissionError as e:
+                return {"error": str(e)}
+            script = """
+import sys
+from pathlib import Path
+sys.stdout.buffer.write(Path(sys.argv[1]).read_bytes())
+"""
+            stdout, stderr, rc = await sudo_exec(
+                username, ["python3", "-c", script, str(cf_path)]
+            )
+            if rc != 0:
+                return {"error": f"content_file 읽기 실패: {stderr.decode().strip()}"}
+            content = stdout.decode("utf-8")
 
         if not _can_write(norm_path, username):
             return {"error": _write_denied_msg(username)}
