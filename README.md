@@ -4,6 +4,8 @@ Authentik OAuth 인증이 적용된 MCP 서버. 인증된 유저 권한으로 ba
 
 ## 제공 툴
 
+### 파일 시스템
+
 | 툴 | 설명 |
 |---|---|
 | `bash` | bash 명령 실행 (rm, mv 등 위험 명령 차단) |
@@ -18,6 +20,19 @@ Authentik OAuth 인증이 적용된 MCP 서버. 인증된 유저 권한으로 ba
 | `mkdir` | 디렉토리 생성 |
 | `grep` | 파일에서 regex 패턴 검색 (`max_results=200`, `max_chars=500`) |
 | `file_serve` | 파일을 `/dev/shm`에 복사하고 공개 URL 반환 (`max_size_mb=10.0`) |
+
+### Wiki.js (`wiki_tools.py`)
+
+`WIKI_URL` / `WIKI_API_KEY_FILE` 설정 시 자동 활성화.
+
+| 툴 | 설명 |
+|---|---|
+| `wiki_get_page` | 경로로 페이지 조회 (제목, 마크다운, 태그, 메타데이터) |
+| `wiki_modify_page` | 페이지 생성/수정. `mode`: `create` / `update`(sed 방식) / `full_update`(전체 대치) |
+| `wiki_get_tags` | 전체 페이지에서 사용 중인 태그 목록 + 사용 횟수 반환 |
+| `wiki_upload_asset` | Base64 파일을 Wiki.js 에셋으로 업로드 |
+
+**쓰기 권한:** 본인 홈(`{WIKI_HOME_PREFIX}/{username}/...`) 또는 `WIKI_COMMON_PATHS` 경로만 허용. 읽기는 모든 인증 유저 가능.
 
 ## 요구사항
 
@@ -97,6 +112,11 @@ Authentik이 구성된 환경에서 사용. 아래 환경변수 필요.
 | `MCP_GROUP` | 툴 사용 허용 Linux 그룹 (기본: `mcp-users`) |
 | `ALLOWED_PATH_ROOTS` | 유저별 접근 허용 루트 경로, 콤마 구분 (기본: `/home`) |
 | `SHARED_PATHS` | 모든 유저 공용 접근 경로, 콤마 구분 (기본: 없음) |
+| `WIKI_URL` | Wiki.js 서버 주소 (미설정 시 Wiki 툴 비활성화) |
+| `WIKI_API_KEY_FILE` | 관리자 API 키 파일 경로 (e.g. `~/wiki.key`) |
+| `WIKI_LOCALE` | 페이지 로케일 (기본: `en`) |
+| `WIKI_HOME_PREFIX` | 유저 홈 경로 접두사 (미설정 시 `{username}/...`) |
+| `WIKI_COMMON_PATHS` | 공용 경로, 콤마 구분 (e.g. `cbpc,public`). 모든 인증 유저 읽기/쓰기 허용 |
 
 파일 접근 권한 예시: `ALLOWED_PATH_ROOTS=/home` 설정 시 유저 `inrok`은 `/home/inrok` 에만 접근 가능. `SHARED_PATHS=/storage/share` 설정 시 해당 경로는 모든 유저 접근 가능.
 

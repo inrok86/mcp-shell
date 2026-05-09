@@ -21,6 +21,7 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route
 
 from oauth import get_user
+from wiki_tools import register_wiki_tools
 
 load_dotenv()
 
@@ -682,6 +683,15 @@ app = Starlette(
     middleware=[Middleware(AuthMiddleware)],
     lifespan=lifespan,
 )
+
+# ── Wiki.js 도구 등록 ────────────────────────────────────────────────────────
+
+_wiki_registered = register_wiki_tools(mcp, current_user)
+if _wiki_registered:
+    print("[wiki_tools] Wiki.js 도구 등록 완료")
+else:
+    print("[wiki_tools] WIKI_URL / WIKI_API_KEY_FILE 미설정 — 스킵")
+
 
 if __name__ == "__main__":
     import uvicorn
